@@ -1,85 +1,73 @@
 // netlify/functions/deploy.js
-import { Handler, HandlerEvent } from "@netlify/functions";
-import JSZip from "jszip";
-import fetch from "node-fetch";
+// ✅ CommonJS version for Netlify Functions
 
-const NETLIFY_TOKEN = nfp_nkaUFvvihs48EPfZocKuCxe5CZZkT6iGe800;
+const AdmZip = require('adm-zip');
+const fetch = require('node-fetch');
+const fs = require('fs');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const os = require('os');
 
-export const handler: Handler = async (event: HandlerEvent) => {
-  if (event.httpMethod === "OPTIONS") {
-    return {
-      statusCode: 200,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-      },
-      body: "",
-    };
-  }
+exports.handler = async (event) => {
   try {
-    // 1. Parse the incoming multipart body into a Zip blob
-    const contentType = event.headers["content-type"] || "";
-    const boundary = contentType.split("boundary=")[1];
-    const raw = Buffer.from(event.body || "", "base64");
-    const parts = raw
-      .toString("binary")
-      .split(`--${boundary}`)
-      .filter(p => p.includes("site.zip"));
-    if (!parts.length) throw new Error("site.zip not found in body");
+    if (event.httpMethod !== 'POST') {
+      return {
+        statusCode: 405,
+        body: JSON.stringify({ error: 'Method Not Allowed' })
+      };
+    }
 
-    // Extract the binary zip
-    const zipBase64 = parts[0].split("\r\n\r\n")[1].split("\r\n--")[0];
-    const zipBuffer = Buffer.from(zipBase64, "binary");
+    const boundary = event.headers['content-type'].split('boundary=')[1];
+    const bodyBuffer = Buffer.from(event.body, event.isBase64Encoded ? 'base64' : 'utf8');
 
-    // 2. Load zip and prepare files map
-    const zip = await JSZip.loadAsync(zipBuffer);
-    const filesMap: Record<string, { content: string }> = {};
+    const start = bodyBuffer.indexOf(Buffer.from('PK')); // ZIP magic number
+    const zipBuffer = bodyBuffer.slice(start);
 
-    await Promise.all(Object.keys(zip.files).map(async (name) => {
-      if (zip.files[name].dir) return;
-      const data = await zip.files[name].async("uint8array");
-      filesMap[name] = { content: Buffer.from(data).toString("base64") };
-    }));
+    const zip = new AdmZip(zipBuffer);
+    const tmpDir = path.join(os.tmpdir(), uuidv4());
+    zip.extractAllTo(tmpDir, true);
 
-    // 3. Create a new Netlify site
-    const siteRes = await fetch("https://api.netlify.com/api/v1/sites", {
-      method: "POST",
+    const siteName = `site-${uuidv4().slice(0, 6)}`;
+    const zipOutput = path.join(os.tmpdir(), `${siteName}.zip`);
+
+    const newZip = new AdmZip();
+    newZip.addLocalFolder(tmpDir);
+    newZip.writeZip(zipOutput);
+
+    const zipData = fs.readFileSync(zipOutput);
+    const deploy = await fetch('https://api.netlify.com/api/v1/sites', {
+      method: 'POST',
       headers: {
-        Authorization: `Bearer ${NETLIFY_TOKEN}`,
-        "Content-Type": "application/json"
+        Authorization: `Bearer nfp_nkaUFvvihs48EPfZocKuCxe5CZZkT6iGe800`,
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify({})
+      body: JSON.stringify({
+        name: siteName,
+      })
     });
-    const site = await siteRes.json();
-    if (!site.id) throw new Error("Failed to create site");
 
-    // 4. Deploy files
-    const deployRes = await fetch(
-      `https://api.netlify.com/api/v1/sites/${site.id}/deploys`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${NETLIFY_TOKEN}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ files: filesMap })
-      }
-    );
-    const deploy = await deployRes.json();
-    if (!deploy.deploy_ssl_url) throw new Error("Deploy failed");
+    const site = await deploy.json();
 
-    // 5. Return the live URL
+    const deployRes = await fetch(`https://api.netlify.com/api/v1/sites/${site.id}/deploys`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer nfp_nkaUFvvihs48EPfZocKuCxe5CZZkT6iGe800`,
+        'Content-Type': 'application/zip'
+      },
+      body: zipData
+    });
+
+    const deployed = await deployRes.json();
     return {
       statusCode: 200,
-      headers: { "Access-Control-Allow-Origin": "*" },
-      body: JSON.stringify({ url: deploy.deploy_ssl_url })
+      body: JSON.stringify({ url: deployed.deploy_ssl_url || deployed.deploy_url })
     };
-  } catch (err: any) {
+
+  } catch (err) {
+    console.error('Server error:', err);
     return {
       statusCode: 500,
-      headers: { "Access-Control-Allow-Origin": "*" },
-      body: JSON.stringify({ error: err.message })
+      body: JSON.stringify({ error: 'Internal Server Error', details: err.message })
     };
   }
 };
