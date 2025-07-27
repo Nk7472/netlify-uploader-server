@@ -55,7 +55,13 @@
         if (!sitesRes.ok) throw new Error('Failed to fetch sites');
 
         const sites = await sitesRes.json();
-        const targetSite = sites.find(site => site.ssl_url === targetUrl || site.url === targetUrl);
+        const cleanInputUrl = targetUrl.replace(/^https?:\\/\\//, '').toLowerCase();
+const targetSite = sites.find(site => {
+  const siteUrl = site.url?.replace(/^https?:\\/\\//, '').toLowerCase();
+  const sslUrl = site.ssl_url?.replace(/^https?:\\/\\//, '').toLowerCase();
+  return siteUrl === cleanInputUrl || sslUrl === cleanInputUrl;
+});
+
 
         if (!targetSite) {
           resultEl.textContent = 'No site found with that URL.';
