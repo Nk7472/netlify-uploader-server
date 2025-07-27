@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rename Netlify Site</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 40px;
+      max-width: 600px;
+      margin: auto;
+    }
+    input, button {
+      padding: 10px;
+      margin: 10px 0;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    button {
+      background-color: #007acc;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #005fa3;
+    }
+  </style>
+</head>
+<body>
+  <h2>Rename a Netlify Site</h2>
+  <input type="text" id="siteUrl" placeholder="Enter full Netlify URL (e.g. https://yoursite.netlify.app)">
+  <input type="text" id="newSiteName" placeholder="Enter new custom site name">
+  <input type="text" id="netlifyToken" placeholder="Enter your Netlify personal token">
+  <button onclick="renameNetlifySite()">Rename Site</button>
+
+  <pre id="result"></pre>
+
+  <script>
+    async function renameNetlifySite() {
+      const targetUrl = document.getElementById('siteUrl').value.trim();
+      const newSiteName = document.getElementById('newSiteName').value.trim();
+      const token = document.getElementById('netlifyToken').value.trim();
+
+      const API_BASE = 'https://api.netlify.com/api/v1';
+      const resultEl = document.getElementById('result');
+
+      try {
+        const sitesRes = await fetch(`${API_BASE}/sites`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!sitesRes.ok) throw new Error('Failed to fetch sites');
+
+        const sites = await sitesRes.json();
+        const targetSite = sites.find(site => site.ssl_url === targetUrl || site.url === targetUrl);
+
+        if (!targetSite) {
+          resultEl.textContent = 'No site found with that URL.';
+          return;
+        }
+
+        const updateRes = await fetch(`${API_BASE}/sites/${targetSite.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ name: newSiteName })
+        });
+
+        if (!updateRes.ok) throw new Error('Failed to rename site. Maybe the name is taken?');
+
+        const updatedSite = await updateRes.json();
+        resultEl.textContent = `✅ Site renamed to: ${updatedSite.name}\n🔗 URL: https://${updatedSite.name}.netlify.app`;
+      } catch (err) {
+        resultEl.textContent = `❌ Error: ${err.message}`;
+      }
+    }
+  </script>
+</body>
+</html>
