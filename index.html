@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Rename Netlify Site</title>
+  <title>Upload & Rename Netlify Site</title>
   <style>
     body {
       font-family: Arial, sans-serif;
       padding: 40px;
-      max-width: 600px;
+      max-width: 700px;
       margin: auto;
     }
-    input, button {
+    input, button, textarea, label {
       padding: 10px;
       margin: 10px 0;
       width: 100%;
@@ -25,71 +25,94 @@
     button:hover {
       background-color: #005fa3;
     }
+    textarea {
+      height: 200px;
+      resize: vertical;
+    }
+    .hidden {
+      display: none;
+    }
+    .loading {
+      background: #ffe58f;
+      padding: 10px;
+      margin-top: 20px;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
-  <h2>Rename a Netlify Site</h2>
-  <input type="text" id="siteUrl" placeholder="Enter full Netlify URL (e.g. https://yoursite.netlify.app)">
+  <h2>Upload and Rename a Netlify Site</h2>
+  <label>Select Folder (zip it manually before upload):</label>
+  <input type="file" id="folderZip" accept=".zip">
   <input type="text" id="newSiteName" placeholder="Enter new custom site name">
   <input type="text" id="netlifyToken" placeholder="Enter your Netlify personal token">
-  <button onclick="renameNetlifySite()">Rename Site</button>
+  <button onclick="uploadAndRenameSite()">Upload & Rename</button>
 
+  <div id="loading" class="hidden loading">⏳ Uploading and renaming site...</div>
   <pre id="result"></pre>
+  <h3>🔍 Debug Info:</h3>
+  <textarea id="debug" readonly></textarea>
 
   <script>
-  async function renameNetlifySite() {
-    const targetUrl = document.getElementById('siteUrl').value.trim();
-    const newSiteName = document.getElementById('newSiteName').value.trim();
-    const token = document.getElementById('netlifyToken').value.trim();
+    async function uploadAndRenameSite() {
+      const zipFile = document.getElementById('folderZip').files[0];
+      const newSiteName = document.getElementById('newSiteName').value.trim();
+      const token = document.getElementById('netlifyToken').value.trim();
 
-    const API_BASE = 'https://api.netlify.com/api/v1';
-    const resultEl = document.getElementById('result');
+      const API_BASE = 'https://api.netlify.com/api/v1';
+      const resultEl = document.getElementById('result');
+      const debugEl = document.getElementById('debug');
+      const loadingEl = document.getElementById('loading');
 
-    try {
-      resultEl.textContent = '🔄 Fetching sites...';
+      resultEl.textContent = '';
+      debugEl.value = '';
+      loadingEl.classList.remove('hidden');
 
-      const sitesRes = await fetch(`${API_BASE}/sites`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      try {
+        // Step 1: Upload zip to Netlify
+        debugEl.value += '📦 Uploading zip file...\n';
 
-      if (!sitesRes.ok) throw new Error('Failed to fetch sites');
+        const formData = new FormData();
+        formData.append('file', zipFile);
 
-      const sites = await sitesRes.json();
+        const uploadRes = await fetch(`${API_BASE}/sites`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`
+          },
+          body: formData
+        });
 
-      const cleanInputUrl = targetUrl.replace(/^https?:\/\//, '').toLowerCase();
-      const targetSite = sites.find(site => {
-        const siteUrl = site.url?.replace(/^https?:\/\//, '').toLowerCase();
-        const sslUrl = site.ssl_url?.replace(/^https?:\/\//, '').toLowerCase();
-        return siteUrl === cleanInputUrl || sslUrl === cleanInputUrl;
-      });
+        if (!uploadRes.ok) throw new Error('Failed to upload zip');
 
-      if (!targetSite) {
-        resultEl.textContent = '❌ No site found with that URL.';
-        return;
+        const uploadedSite = await uploadRes.json();
+        debugEl.value += `✅ Uploaded to: ${uploadedSite.url}\nSite ID: ${uploadedSite.id}\n`;
+
+        // Step 2: Rename the site
+        debugEl.value += `✏️ Renaming site to: ${newSiteName}...\n`;
+
+        const updateRes = await fetch(`${API_BASE}/sites/${uploadedSite.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ name: newSiteName })
+        });
+
+        if (!updateRes.ok) throw new Error('Failed to rename site. Maybe name is taken?');
+
+        const updatedSite = await updateRes.json();
+        resultEl.textContent = `✅ Final site URL: https://${updatedSite.name}.netlify.app`;
+        debugEl.value += `✅ Renamed to: ${updatedSite.name}\n`;
+
+      } catch (err) {
+        resultEl.textContent = `❌ Error: ${err.message}`;
+        debugEl.value += `⚠️ Error Trace:\n${err.stack}`;
+      } finally {
+        loadingEl.classList.add('hidden');
       }
-
-      resultEl.textContent = '🔄 Renaming site...';
-
-      const updateRes = await fetch(`${API_BASE}/sites/${targetSite.id}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ name: newSiteName })
-      });
-
-      if (!updateRes.ok) throw new Error('Failed to rename site. Maybe the name is taken?');
-
-      const updatedSite = await updateRes.json();
-      resultEl.textContent = `✅ Site renamed to: ${updatedSite.name}\n🔗 URL: https://${updatedSite.name}.netlify.app`;
-    } catch (err) {
-      resultEl.textContent = `❌ Error: ${err.message}`;
-      console.error(err);
     }
-  }
-</script>
+  </script>
 </body>
 </html>
